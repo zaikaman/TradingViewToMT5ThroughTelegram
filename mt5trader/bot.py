@@ -2,7 +2,6 @@ import MetaTrader5 as mt5
 import requests
 import time
 import logging
-from datetime import datetime
 
 # Setup logging with both file and console output
 logging.basicConfig(
@@ -15,8 +14,8 @@ logging.basicConfig(
 )
 
 # Telegram bot details
-BOT_API = ''
-CHANNEL_ID = ''
+BOT_API = '7746265731:AAECxGT4uaTpct9ikn0gtCvelJ4VNLyZAH4'
+CHANNEL_ID = '-1002277376839'
 TELEGRAM_URL = f'https://api.telegram.org/bot{BOT_API}/getUpdates'
 
 # MT5 configuration
@@ -31,90 +30,38 @@ if not mt5.initialize():
 else:
     logging.info("MT5 initialized successfully")
 
-# Text file to store processed messages' update_id and content
-PROCESSED_MESSAGES_FILE = "processed_messages.txt"
-
-# Biến lưu lại update_id cuối cùng đã kiểm tra
-last_update_id = 0
-
-# Function to read processed message ids from the file
-def read_processed_messages():
-    processed_ids = set()
-    try:
-        with open(PROCESSED_MESSAGES_FILE, "r") as file:
-            for line in file:
-                # Only read update_id from each line
-                update_id = line.strip()  # Remove any extra whitespace or newlines
-                processed_ids.add(int(update_id))
-    except FileNotFoundError:
-        logging.info(f"{PROCESSED_MESSAGES_FILE} not found, starting fresh.")
-    return processed_ids
-
-# Function to save only the update_id of processed messages
-def save_processed_message(update_id):
-    try:
-        with open(PROCESSED_MESSAGES_FILE, "a") as file:
-            # Save only the update_id to the file
-            file.write(f"{update_id}\n")
-        logging.info(f"Saved processed message id: {update_id}")
-    except Exception as e:
-        logging.error(f"Error saving processed message id: {e}")
-
-# Function to get Telegram signals
-def get_telegram_signal(processed_ids):
-    global last_update_id
+# Function to get the newest Telegram message
+def get_latest_message():
     try:
         response = requests.get(TELEGRAM_URL)
         if response.status_code == 200:
             data = response.json()
             messages = data['result']
-            logging.info(f"Received {len(messages)} messages from Telegram")
-            
-            for message in reversed(messages):
-                update_id = message.get('update_id')
 
-                # Skip messages that are already processed
-                if update_id in processed_ids:
-                    logging.info(f"Skipping already processed message with update_id: {update_id}")
-                    continue
+            if messages:
+                latest_message = messages[-1].get('channel_post', {}).get('text', '').strip()
+                logging.info(f"Latest message from Telegram: {latest_message}")
+                return latest_message
 
-                # Get message content
-                text = message.get('channel_post', {}).get('text', '')
-                text = text.strip()
-
-                # Split the message into lines
-                lines = text.split('\n')
-
-                # Ensure there are exactly 5 lines in the message
-                if len(lines) != 5:
-                    logging.info(f"Skipping message with {len(lines)} lines: {text}")
-                    continue
-
-                # Check if the message contains a valid signal
-                if "pair:" in lines[0].lower() and "type:" in lines[1].lower():
-                    logging.info(f"Valid signal found: {text}")
-                    
-                    # Save the correct update_id
-                    save_processed_message(update_id)
-                    
-                    # Reload the processed_ids to ensure it's updated
-                    processed_ids.add(update_id)  # Update the set directly instead of reading from the file
-                    return text
-                else:
-                    logging.info(f"No valid signal in message: {text}")
-                    
     except Exception as e:
         logging.error(f"Error fetching Telegram messages: {e}")
+    return None
 
 # Function to parse the signal
 def parse_signal(signal):
     try:
         lines = signal.split('\n')
         logging.info(f"Lines: {lines}")  # Log the message lines after splitting
-        pair = lines[0].split(': ')[1].strip()
-        trade_type = lines[1].split(': ')[1].strip().lower()
-        logging.info(f"Parsed signal - Pair: {pair}, Type: {trade_type}")
-        return trade_type
+
+        # Validate the signal format and extract the trade type
+        if len(lines) == 5 and "pair:" in lines[0].lower() and "type:" in lines[1].lower():
+            pair = lines[0].split(': ')[1].strip()
+            trade_type = lines[1].split(': ')[1].strip().lower()
+            logging.info(f"Parsed signal - Pair: {pair}, Type: {trade_type}")
+            return trade_type
+        else:
+            logging.info(f"Message is not a valid trade signal: {signal}")
+            return None
     except Exception as e:
         logging.error(f"Error parsing signal: {e}")
         return None
@@ -146,7 +93,7 @@ def close_trade(trade):
             'deviation': 20,
             'magic': 234000,
             'comment': "Closing trade",
-            'type_filling': mt5.ORDER_FILLING_IOC,  # Changed from FOK to IOC
+            'type_filling': mt5.ORDER_FILLING_IOC,
         }
         result = mt5.order_send(close_request)
         if result.retcode != mt5.TRADE_RETCODE_DONE:
@@ -168,7 +115,7 @@ def open_trade(trade_type):
             'action': mt5.TRADE_ACTION_DEAL,
             'magic': 234000,
             'symbol': SYMBOL,
-            'volume': LOT_SIZE,  # Use predefined LOT_SIZE
+            'volume': LOT_SIZE,
             'price': price,
             'deviation': 20,
             'type': order_type,
@@ -184,48 +131,73 @@ def open_trade(trade_type):
         logging.error(f"Error opening trade: {e}")
         return None
 
-# Main loop
+# Function to send a confirmation message to Telegram after executing a trade
+def send_trade_confirmation():
+    try:
+        confirmation_message = "Signal received! Executing trade on MT5"
+        requests.get(f"https://api.telegram.org/bot{BOT_API}/sendMessage?chat_id={CHANNEL_ID}&text={confirmation_message}")
+        logging.info("Sent trade confirmation to Telegram.")
+    except Exception as e:
+        logging.error(f"Error sending trade confirmation: {e}")
+
+# Initialize this variable to keep track of the last processed message
+# Initialize this variable to keep track of the last processed signal
+last_processed_message = None
+
 def main():
+    global last_processed_message
     logging.info("Listening for signals...")
-    
-    # Read processed messages before starting
-    processed_ids = read_processed_messages()
 
     while True:
-        signal = get_telegram_signal(processed_ids)
-        if signal:
-            trade_type = parse_signal(signal)
+        latest_message = get_latest_message()
+
+        if latest_message:
+            # Check if the message is the confirmation message and ignore it
+            if "Signal received! Executing trade on MT5" in latest_message:
+                logging.info("Confirmation message detected, ignoring it.")
+                time.sleep(1)  # Wait before checking again
+                continue
+            
+            # Check if the message has already been processed (duplicate check)
+            if latest_message == last_processed_message:
+                logging.info("Duplicate message detected, no action taken.")
+                time.sleep(1)  # Wait before checking again
+                continue
+
+            # Parse and validate the new message (signal)
+            trade_type = parse_signal(latest_message)
             if trade_type:
                 open_trade_position = get_open_trade()
 
-                # If there's an open trade, check if it's opposite to the new signal
+                # If there's an open trade in the opposite direction, close it first
                 if open_trade_position:
                     if (trade_type == "buy" and open_trade_position.type == mt5.ORDER_TYPE_SELL) or \
                         (trade_type == "sell" and open_trade_position.type == mt5.ORDER_TYPE_BUY):
-                        
+
                         logging.info(f"Closing current {open_trade_position.type} trade...")
                         close_result = close_trade(open_trade_position)
 
-                        # Ensure the trade was closed successfully
                         if close_result and close_result.retcode == mt5.TRADE_RETCODE_DONE:
                             logging.info("Trade closed successfully.")
-                            time.sleep(2)  # Give MT5 time to process the trade closure
-                            
-                            # Now open the new trade
-                            logging.info(f"Opening new {trade_type} trade...")
+                            time.sleep(2)  # Pause before opening the new trade
                             open_trade(trade_type)
-                        else:
-                            logging.error(f"Failed to close trade: {close_result}")
-                            continue  # Skip to the next iteration if trade close fails
+                            send_trade_confirmation()
+
+                            # Mark the message as processed
+                            last_processed_message = latest_message
                     else:
                         logging.info(f"Trade already open in {trade_type} direction, no action taken.")
                 else:
-                    # No open trade, open a new one
                     logging.info(f"Opening new {trade_type} trade...")
                     open_trade(trade_type)
+                    send_trade_confirmation()
 
-        time.sleep(1)  # Check for new signals every 1 seconds
+                    # Mark the message as processed
+                    last_processed_message = latest_message
+
+        time.sleep(0.1)  # Check for new signals every 1 second
 
 if __name__ == "__main__":
     main()
+
 
