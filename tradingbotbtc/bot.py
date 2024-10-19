@@ -5,16 +5,16 @@ import telebot
 import time
 
 # Telegram bot token and chat ID
-TOKEN = '7594762357:AAGCP0Lx-qjZIspsOH4eaC8bcVqwZIivWDo'
-CHAT_ID = '-1002277376839'  # Replace with your Telegram chat ID
+TOKEN = ''
+CHAT_ID = ''  # Replace with your Telegram chat ID
 
 # Initialize Telegram bot
 bot = telebot.TeleBot(TOKEN)
 
 # Gmail IMAP setup
-IMAP_SERVER = "imap.gmail.com"
-IMAP_USER = "thinhgpt1706@gmail.com"  
-IMAP_PASS = "xgxn kjcv haqf sjxz"   
+IMAP_SERVER = ""
+IMAP_USER = ""  
+IMAP_PASS = ""   
 
 # Email checking interval (in seconds)
 CHECK_INTERVAL = 1  # Check every 30 seconds
