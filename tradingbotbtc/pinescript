@@ -1,0 +1,148 @@
+//@version=4
+strategy(title="Scalping PullBack Tool R1.1 by JustUncleL", shorttitle="SCALPTOOL R1.1", overlay=true)
+
+// === INPUTS ===
+HiLoLen         = input(34, minval=2, title="High Low PAC channel Length")
+fastEMAlength   = input(89, minval=2)
+mediumEMAlength = input(200, minval=2)
+slowEMAlength   = input(600, minval=2)
+ShowFastEMA     = input(true)
+ShowMediumEMA   = input(true)
+ShowSlowEMA     = input(false)
+ShowHHLL        = input(false)
+ShowFractals    = input(true)
+filterBW        = input(false, title="Show Ideal Fractals Only")
+ShowBarColor    = input(true, title="Show coloured Bars around PAC")
+Lookback        = input(3, minval=1, title="Pullback Lookback for PAC Cross Check")
+DelayArrow      = input(false, title="Show Alert Arrows Only on Closed Candles")
+Delay           = DelayArrow ? 1 : 0
+ShowTrendBGcolor= input(true)
+UseHAcandles    = input(true, title="Use Heikin Ashi Candles in Algo Calculations")
+stopLossPercent = input(1, title="Stop Loss (%)")
+takeProfitPercent = input(2, title="Take Profit (%)")
+
+// === /INPUTS ===
+
+// === BASE FUNCTIONS ===
+
+haClose = UseHAcandles ? security(heikinashi(syminfo.tickerid), timeframe.period, close) : close
+haOpen  = UseHAcandles ? security(heikinashi(syminfo.tickerid), timeframe.period, open) : open
+haHigh  = UseHAcandles ? security(heikinashi(syminfo.tickerid), timeframe.period, high) : high
+haLow   = UseHAcandles ? security(heikinashi(syminfo.tickerid), timeframe.period, low) : low
+
+// Fractal Recognition Functions:
+isRegularFractal(mode) =>
+    ret = mode == 1 ? high[4] < high[3] and high[3] < high[2] and high[2] > high[1] and high[1] > high[0] : 
+           mode == -1 ? low[4] > low[3] and low[3] > low[2] and low[2] < low[1] and low[1] < low[0] : 
+           false
+    ret
+
+isBWFractal(mode) =>
+    ret = mode == 1 ? high[4] < high[2] and high[3] <= high[2] and high[2] >= high[1] and high[2] > high[0] : 
+           mode == -1 ? low[4] > low[2] and low[3] >= low[2] and low[2] <= low[1] and low[2] < low[0] : 
+           false
+    ret
+// === /BASE FUNCTIONS ===
+
+// === SERIES SETUP ===
+
+// Setup Moving Averages and PAC channel:
+fastEMA     = ema(haClose, fastEMAlength)
+mediumEMA   = ema(haClose, mediumEMAlength)
+slowEMA     = ema(haClose, slowEMAlength)
+pacC        = ema(haClose, HiLoLen)
+pacL        = ema(haLow, HiLoLen)
+pacU        = ema(haHigh, HiLoLen)
+TrendDirection = fastEMA > mediumEMA and pacL > mediumEMA ? 1 : 
+                 fastEMA < mediumEMA and pacU < mediumEMA ? -1 : 0
+
+// Fractal Recognition:
+filteredtopf = filterBW ? isRegularFractal(1) : isBWFractal(1)
+filteredbotf = filterBW ? isRegularFractal(-1) : isBWFractal(-1)
+
+// Higher Highs, Lower Highs, Higher Lows, Lower Lows:
+valuewhen_H0 = valuewhen(filteredtopf == true, high[2], 0)
+valuewhen_H1 = valuewhen(filteredtopf == true, high[2], 1)
+valuewhen_H2 = valuewhen(filteredtopf == true, high[2], 2)
+higherhigh = filteredtopf == false ? false : valuewhen_H1 < valuewhen_H0 and valuewhen_H2 < valuewhen_H0
+lowerhigh  = filteredtopf == false ? false : valuewhen_H1 > valuewhen_H0 and valuewhen_H2 > valuewhen_H0
+
+valuewhen_L0 = valuewhen(filteredbotf == true, low[2], 0)
+valuewhen_L1 = valuewhen(filteredbotf == true, low[2], 1)
+valuewhen_L2 = valuewhen(filteredbotf == true, low[2], 2)
+higherlow  = filteredbotf == false ? false : valuewhen_L1 < valuewhen_L0 and valuewhen_L2 < valuewhen_L0
+lowerlow   = filteredbotf == false ? false : valuewhen_L1 > valuewhen_L0 and valuewhen_L2 > valuewhen_L0
+
+// === /SERIES ===
+
+// === PLOTTING ===
+
+// Plot the Price Action Channel (PAC) base on EMA high, low, and close
+L = plot(pacL, color=color.gray, linewidth=1, title="High PAC EMA", transp=50)
+U = plot(pacU, color=color.gray, linewidth=1, title="Low PAC EMA", transp=50)
+C = plot(pacC, color=color.red, linewidth=2, title="Close PAC EMA", transp=0)
+fill(L, U, color=color.gray, transp=90, title="Fill HiLo PAC")
+
+// Colour bars according to the close position relative to the PAC
+BARcolor = haClose > pacU ? color.blue : haClose < pacL ? color.red : color.gray
+barcolor(ShowBarColor ? BARcolor : na, title="Bar Colours")
+
+// Trend background color
+BGcolor = TrendDirection == 1 ? color.green : 
+          TrendDirection == -1 ? color.red : color.yellow
+bgcolor(ShowTrendBGcolor ? BGcolor : na, transp=90, title="Trend BG Color")
+
+// Draw the EMA ribbon
+plot(ShowFastEMA ? fastEMA : na, color=color.green, linewidth=2, transp=20, title="fastEMA")
+plot(ShowMediumEMA ? mediumEMA : na, color=color.blue, linewidth=3, transp=20, title="mediumEMA")
+plot(ShowSlowEMA ? slowEMA : na, color=color.black, linewidth=4, transp=20, title="slowEMA")
+
+// Plot the Fractals and HH/LL shapes
+plotshape(ShowFractals ? filteredtopf : na, title='Filtered Top Fractals', style=shape.triangledown, location=location.abovebar, color=color.red, offset=-2)
+plotshape(ShowFractals ? filteredbotf : na, title='Filtered Bottom Fractals', style=shape.triangleup, location=location.belowbar, color=color.lime, offset=-2)
+
+plotshape(ShowHHLL ? higherhigh : na, title='Higher High', style=shape.square, location=location.abovebar, color=color.maroon, text="[HH]", offset=-2)
+plotshape(ShowHHLL ? lowerhigh : na, title='Lower High', style=shape.square, location=location.abovebar, color=color.maroon, text="[LH]", offset=-2)
+plotshape(ShowHHLL ? higherlow : na, title='Higher Low', style=shape.square, location=location.belowbar, color=color.green, text="[HL]", offset=-2)
+plotshape(ShowHHLL ? lowerlow : na, title='Lower Low', style=shape.square, location=location.belowbar, color=color.green, text="[LL]", offset=-2)
+
+// === /PLOTTING ===
+
+// === STRATEGY EXECUTION ===
+
+// Initial Balance and Risk Settings
+var float balance = 1000
+riskPercent = 1.0
+riskAmount = balance * (riskPercent / 100)
+
+// Trading Conditions
+BuyCondition = TrendDirection == 1 and haClose > pacU and barssince(haClose < pacC) <= Lookback
+SellCondition = TrendDirection == -1 and haClose < pacL and barssince(haClose > pacC) <= Lookback
+
+// Stop Loss and Take Profit Calculation
+var float sl_price = na
+var float tp_price = na
+if (BuyCondition)
+    sl_price := haClose * (1 - stopLossPercent / 100)
+    tp_price := haClose * (1 + takeProfitPercent / 100)
+    strategy.entry("Buy", strategy.long, qty=riskAmount / abs(haClose - sl_price))
+    strategy.exit("Take Profit/Stop Loss", "Buy", stop=sl_price, limit=tp_price)
+    balance := balance - riskAmount
+    alert("#BTCUSD\nTYPE: BUY\nPRICE: " + tostring(haClose) + "\nBALANCE: " + tostring(balance))
+
+if (SellCondition)
+    sl_price := haClose * (1 + stopLossPercent / 100)
+    tp_price := haClose * (1 - takeProfitPercent / 100)
+    strategy.entry("Sell", strategy.short, qty=riskAmount / abs(haClose - sl_price))
+    strategy.exit("Take Profit/Stop Loss", "Sell", stop=sl_price, limit=tp_price)
+    balance := balance - riskAmount
+    alert("#BTCUSD\nTYPE: SELL\nPRICE: " + tostring(haClose) + "\nBALANCE: " + tostring(balance))
+
+// Exit on opposite signals
+if (SellCondition)
+    strategy.close("Buy")
+    alert("#BTCUSD\nTYPE: STOPLOSS/TAKE PROFIT\nPRICE: " + tostring(haClose) + "\nBALANCE: " + tostring(balance))
+
+if (BuyCondition)
+    strategy.close("Sell")
+    alert("#BTCUSD\nTYPE: STOPLOSS/TAKE PROFIT\nPRICE: " + tostring(haClose) + "\nBALANCE: " + tostring(balance))
